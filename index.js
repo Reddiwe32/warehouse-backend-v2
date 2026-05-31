@@ -306,11 +306,12 @@ app.post('/api/locations', authMiddleware, requireRole('SUPER_ADMIN'), async (re
 });
 
 const PORT = Number(process.env.PORT || 3000);
+const HOST = '0.0.0.0';
 
 initDb()
   .then(() => {
-    app.listen(PORT, () => {
-      console.log(`API started on port ${PORT}`);
+    app.listen(PORT, HOST, () => {
+      console.log(`API started on http://${HOST}:${PORT}`);
     });
   })
   .catch((error) => {
