@@ -74,6 +74,10 @@ function requireRole(...roles) {
   };
 }
 
+app.get('/', (req, res) => {
+  res.json({ ok: true, service: 'warehouse-backend-v2', root: true });
+});
+
 app.get('/health', async (req, res) => {
   try {
     const result = await pool.query('SELECT NOW() as now');
@@ -307,6 +311,8 @@ app.post('/api/locations', authMiddleware, requireRole('SUPER_ADMIN'), async (re
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
+
+console.log('PORT from env =', process.env.PORT);
 
 initDb()
   .then(() => {
