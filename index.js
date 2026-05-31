@@ -6,9 +6,13 @@ const jwt = require('jsonwebtoken');
 const pool = require('./db');
 
 const app = express();
+const registrationRequestsRoutes = require('./src/routes/registrationRequests.routes');
+const errorHandler = require('./src/middlewares/errorHandler');
 
 app.use(cors());
 app.use(express.json());
+
+app.use('/api/registration-requests', registrationRequestsRoutes);
 
 async function initDb() {
   await pool.query(`
@@ -314,9 +318,11 @@ const HOST = '0.0.0.0';
 
 console.log('PORT from env =', process.env.PORT);
 
+app.use(errorHandler);
+
 initDb()
   .then(() => {
-    app.listen(PORT, HOST, () => {
+app.listen(PORT, HOST, () => {
       console.log(`API started on http://${HOST}:${PORT}`);
     });
   })
