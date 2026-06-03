@@ -213,6 +213,18 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
+app.get('/api/users/me', authMiddleware, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, login, full_name, role, warehouse_id, created_at FROM users WHERE id = $1 LIMIT 1',
+      [req.user.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
+    res.json(result.rows[0]);
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 app.get('/api/me', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
