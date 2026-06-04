@@ -6,15 +6,9 @@ const jwt = require('jsonwebtoken');
 const pool = require('./db');
 
 const app = express();
-const registrationRequestsRoutes = require('./src/routes/registrationRequests.routes');
-const notificationsRoutes = require('./src/routes/notifications.routes');
-const errorHandler = require('./src/middlewares/errorHandler');
 
 app.use(cors());
 app.use(express.json());
-
-app.use('/api/registration-requests', registrationRequestsRoutes);
-app.use('/api/notifications', notificationsRoutes);
 
 async function initDb() {
   await pool.query(`
@@ -48,27 +42,6 @@ async function initDb() {
       warehouse_id BIGINT REFERENCES warehouses(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS repair_requests (
-      id BIGSERIAL PRIMARY KEY,
-      location_id BIGINT REFERENCES locations(id) ON DELETE SET NULL,
-      carriage_number TEXT,
-      breakdown_type_id BIGINT,
-      comment TEXT,
-      urgency TEXT NOT NULL DEFAULT 'NORMAL',
-      status TEXT NOT NULL DEFAULT 'NEW',
-      created_by_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-      assigned_to_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-      complexity TEXT NOT NULL DEFAULT 'LIGHT',
-      taken_at TIMESTAMPTZ,
-      started_at TIMESTAMPTZ,
-      completed_at TIMESTAMPTZ,
-      closed_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
 }
@@ -236,18 +209,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.get('/api/users/me', authMiddleware, async (req, res) => {
-  try {
-    const result = await pool.query(
-      'SELECT id, login, full_name, role, warehouse_id, created_at FROM users WHERE id = $1 LIMIT 1',
-      [req.user.id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'User not found' });
-    res.json(result.rows[0]);
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 app.get('/api/me', authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
@@ -348,146 +309,14 @@ app.post('/api/locations', authMiddleware, requireRole('SUPER_ADMIN'), async (re
   }
 });
 
-app.get('/api/repairs', authMiddleware, async (req, res) => {
-  try {
-    const { status, urgency, locationId } = req.query;
-
-    const conditions = [];
-    const params = [];
-
-    if (status) {
-      params.push(status);
-      conditions.push(`r.status = $${params.length}`);
-    }
-
-    if (urgency) {
-      params.push(urgency);
-      conditions.push(`r.urgency = $${params.length}`);
-    }
-
-    if (locationId) {
-      params.push(locationId);
-      conditions.push(`r.location_id = $${params.length}`);
-    }
-
-    const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-
-    const result = await pool.query(
-      `
-      SELECT
-        r.id,
-        r.urgency,
-        r.location_id,
-        r.carriage_number,
-        r.breakdown_type_id,
-        r.comment,
-        r.status,
-        r.created_by_user_id,
-        r.assigned_to_user_id,
-        r.created_at,
-        r.updated_at,
-        r.started_at,
-        r.closed_at,
-        r.completed_at,
-        r.complexity,
-        r.taken_at,
-        l.name AS location_name,
-        cu.full_name AS created_by_name,
-        au.full_name AS assigned_to_name
-      FROM repair_requests r
-      LEFT JOIN locations l ON l.id = r.location_id
-      LEFT JOIN users cu ON cu.id = r.created_by_user_id
-      LEFT JOIN users au ON au.id = r.assigned_to_user_id
-      ${whereSql}
-      ORDER BY
-        CASE WHEN r.urgency = 'URGENT' THEN 0 ELSE 1 END,
-        r.created_at DESC
-      `,
-      params
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error('GET /api/repairs error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-app.post('/api/repairs', authMiddleware, async (req, res) => {
-  try {
-    const {
-      locationId,
-      carriageNumber,
-      breakdownTypeId,
-      comment,
-      urgency,
-      assignedToUserId,
-      complexity,
-    } = req.body;
-
-    if (!locationId || !carriageNumber) {
-      return res.status(400).json({ error: 'locationId and carriageNumber are required' });
-    }
-
-    const result = await pool.query(
-      `
-      INSERT INTO repair_requests (
-        location_id,
-        carriage_number,
-        breakdown_type_id,
-        comment,
-        urgency,
-        status,
-        created_by_user_id,
-        assigned_to_user_id,
-        complexity,
-        created_at,
-        updated_at
-      )
-      VALUES ($1, $2, $3, $4, $5, 'NEW', $6, $7, $8, NOW(), NOW())
-      RETURNING
-        id,
-        urgency,
-        location_id,
-        carriage_number,
-        breakdown_type_id,
-        comment,
-        status,
-        created_by_user_id,
-        assigned_to_user_id,
-        created_at,
-        updated_at,
-        complexity
-      `,
-      [
-        locationId,
-        carriageNumber,
-        breakdownTypeId || null,
-        comment || null,
-        urgency || 'NORMAL',
-        req.user.id,
-        assignedToUserId || null,
-        complexity || 'LIGHT',
-      ]
-    );
-
-    res.status(201).json(result.rows[0]);
-  } catch (error) {
-    console.error('POST /api/repairs error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
 
 console.log('PORT from env =', process.env.PORT);
 
-app.use(errorHandler);
-
 initDb()
   .then(() => {
-app.listen(PORT, HOST, () => {
+    app.listen(PORT, HOST, () => {
       console.log(`API started on http://${HOST}:${PORT}`);
     });
   })
