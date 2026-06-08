@@ -17,6 +17,10 @@ app.use('/api/registration-requests', registrationRequestsRoutes);
 app.use('/api/notifications', notificationsRoutes);
 
 async function initDb() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS part_categories (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS parts (id BIGSERIAL PRIMARY KEY, sku TEXT UNIQUE, name TEXT NOT NULL, description TEXT, photo_url TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS part_category_map (part_id BIGINT REFERENCES parts(id) ON DELETE CASCADE, category_id BIGINT REFERENCES part_categories(id) ON DELETE CASCADE, PRIMARY KEY (part_id, category_id));`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS part_stock (id BIGSERIAL PRIMARY KEY, part_id BIGINT REFERENCES parts(id) ON DELETE CASCADE, warehouse_id BIGINT REFERENCES warehouses(id) ON DELETE CASCADE, quantity INT NOT NULL DEFAULT 0, min_stock INT NOT NULL DEFAULT 0, UNIQUE (part_id, warehouse_id));`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id BIGSERIAL PRIMARY KEY,
@@ -477,6 +481,9 @@ app.post('/api/repairs', authMiddleware, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+const partsRoutes = require('./src/routes/parts.routes');
+app.use('/api/parts', authMiddleware, partsRoutes);
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = '0.0.0.0';
