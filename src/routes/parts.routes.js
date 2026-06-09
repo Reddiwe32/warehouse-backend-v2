@@ -104,4 +104,30 @@ router.patch('/:id/stock', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// PUT /api/parts/:id
+router.put('/:id', async (req, res) => {
+  try {
+    const { sku, name, description, photo_url, category_ids } = req.body;
+    const result = await pool.query(
+      `UPDATE parts SET
+        sku = COALESCE($1, sku),
+        name = COALESCE($2, name),
+        description = COALESCE($3, description),
+        photo_url = COALESCE($4, photo_url),
+        updated_at = NOW()
+       WHERE id = $5 RETURNING *`,
+      [sku || null, name || null, description || null, photo_url || null, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Part not found' });
+    if (category_ids && Array.isArray(category_ids)) {
+      await pool.query('DELETE FROM part_category_map WHERE part_id = $1', [req.params.id]);
+      for (const cid of category_ids) {
+        await pool.query('INSERT INTO part_category_map (part_id, category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [req.params.id, cid]);
+      }
+    }
+    res.json(result.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
