@@ -17,7 +17,7 @@ router.post('/categories', async (req, res) => {
     if (!name) return res.status(400).json({ error: 'name is required' });
     const result = await pool.query(
       'INSERT INTO part_categories (name, description, parent_id) VALUES ($1, $2, $3) RETURNING *',
-      [name, description || null]
+      [name, description || null, parentId ?? null]
     );
     res.status(201).json(result.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
