@@ -674,3 +674,11 @@ app.put('/api/parts/:id/stock', authMiddleware, requireRole('SUPER_ADMIN'), asyn
     res.json({ success: true, data: rows[0] });
   } catch (e) { next(e); }
 });
+
+// ─── МИГРАЦИЯ: добавить parent_id в part_categories ─────────
+app.post('/api/migrations/add-category-parent', authMiddleware, requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    await pool.query(`ALTER TABLE part_categories ADD COLUMN IF NOT EXISTS parent_id BIGINT REFERENCES part_categories(id) ON DELETE CASCADE`);
+    res.json({ success: true, message: 'parent_id added' });
+  } catch (e) { next(e); }
+});
