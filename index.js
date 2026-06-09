@@ -510,7 +510,7 @@ app.listen(PORT, HOST, () => {
 // ─── PART CATEGORIES ────────────────────────────────────────
 app.get('/api/parts/categories', authMiddleware, async (req, res, next) => {
   try {
-    const { rows } = await pool.query(`SELECT id, name, description, created_at, updated_at FROM part_categories ORDER BY name ASC`);
+    const { rows } = await pool.query(`SELECT id, name, description, parent_id, created_at, updated_at FROM part_categories ORDER BY name ASC`);
     res.json({ success: true, data: rows });
   } catch (e) { next(e); }
 });
@@ -519,10 +519,11 @@ app.post('/api/parts/categories', authMiddleware, requireRole('SUPER_ADMIN'), as
   try {
     const name = String(req.body?.name || '').trim();
     const description = req.body?.description ? String(req.body.description).trim() : null;
+    const parentId = req.body && req.body.parentId ? Number(req.body.parentId) : null;
     if (!name) return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'name is required' } });
     const { rows } = await pool.query(
-      `INSERT INTO part_categories (name, description) VALUES ($1, $2) RETURNING id, name, description, created_at, updated_at`,
-      [name, description]
+      `INSERT INTO part_categories (name, description, parent_id) VALUES ($1, $2, $3) RETURNING id, name, description, parent_id, created_at, updated_at`,
+      [name, description, parentId]
     );
     res.status(201).json({ success: true, data: rows[0] });
   } catch (e) { next(e); }
