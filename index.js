@@ -9,12 +9,46 @@ const app = express();
 const registrationRequestsRoutes = require('./src/routes/registrationRequests.routes');
 const notificationsRoutes = require('./src/routes/notifications.routes');
 const errorHandler = require('./src/middlewares/errorHandler');
+const multer = require('multer');
+const nodePath = require('path');
+const nodeFs = require('fs');
+
+const uploadsDir = nodePath.join(__dirname, 'uploads');
+if (!nodeFs.existsSync(uploadsDir)) nodeFs.mkdirSync(uploadsDir);
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const ext = nodePath.extname(file.originalname);
+    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
+    cb(null, unique + ext);
+  }
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = /jpeg|jpg|png|gif|webp/;
+    const ok = allowed.test(nodePath.extname(file.originalname).toLowerCase()) && allowed.test(file.mimetype);
+    ok ? cb(null, true) : cb(new Error('Tolko izobrazheniya'));
+  }
+});
+
 
 app.use(cors());
 app.use(express.json());
 
 app.use('/api/registration-requests', registrationRequestsRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/uploads', express.static(uploadsDir));
+
+app.post('/api/upload', upload.single('photo'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'File not provided' });
+  const url = req.protocol + '://' + req.get('host') + '/uploads/' + req.file.filename;
+  res.json({ url, filename: req.file.filename });
+});
+
 
 async function initDb() {
   await pool.query(`CREATE TABLE IF NOT EXISTS part_categories (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());`);
