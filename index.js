@@ -21,6 +21,11 @@ async function initDb() {
   await pool.query(`CREATE TABLE IF NOT EXISTS parts (id BIGSERIAL PRIMARY KEY, sku TEXT UNIQUE, name TEXT NOT NULL, description TEXT, photo_url TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());`);
   await pool.query(`CREATE TABLE IF NOT EXISTS part_category_map (part_id BIGINT REFERENCES parts(id) ON DELETE CASCADE, category_id BIGINT REFERENCES part_categories(id) ON DELETE CASCADE, PRIMARY KEY (part_id, category_id));`);
   await pool.query(`CREATE TABLE IF NOT EXISTS part_stock (id BIGSERIAL PRIMARY KEY, part_id BIGINT REFERENCES parts(id) ON DELETE CASCADE, warehouse_id BIGINT REFERENCES warehouses(id) ON DELETE CASCADE, quantity INT NOT NULL DEFAULT 0, min_stock INT NOT NULL DEFAULT 0, UNIQUE (part_id, warehouse_id));`);
+
+  await pool.query(`CREATE TABLE IF NOT EXISTS part_categories (id BIGSERIAL PRIMARY KEY, name TEXT NOT NULL, description TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS parts (id BIGSERIAL PRIMARY KEY, sku TEXT UNIQUE, name TEXT NOT NULL, description TEXT, photo_url TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW());`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS part_category_map (part_id BIGINT REFERENCES parts(id) ON DELETE CASCADE, category_id BIGINT REFERENCES part_categories(id) ON DELETE CASCADE, PRIMARY KEY (part_id, category_id));`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS part_stock (id BIGSERIAL PRIMARY KEY, part_id BIGINT REFERENCES parts(id) ON DELETE CASCADE, warehouse_id BIGINT REFERENCES warehouses(id) ON DELETE CASCADE, quantity INT NOT NULL DEFAULT 0, min_stock INT NOT NULL DEFAULT 0, UNIQUE (part_id, warehouse_id));`);
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id BIGSERIAL PRIMARY KEY,
@@ -502,3 +507,170 @@ app.listen(PORT, HOST, () => {
     console.error('Database init error:', error);
     process.exit(1);
   });
+// ─── PART CATEGORIES ────────────────────────────────────────
+app.get('/api/parts/categories', authMiddleware, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`SELECT id, name, description, created_at, updated_at FROM part_categories ORDER BY name ASC`);
+    res.json({ success: true, data: rows });
+  } catch (e) { next(e); }
+});
+
+app.post('/api/parts/categories', authMiddleware, requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const name = String(req.body?.name || '').trim();
+    const description = req.body?.description ? String(req.body.description).trim() : null;
+    if (!name) return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'name is required' } });
+    const { rows } = await pool.query(
+      `INSERT INTO part_categories (name, description) VALUES ($1, $2) RETURNING id, name, description, created_at, updated_at`,
+      [name, description]
+    );
+    res.status(201).json({ success: true, data: rows[0] });
+  } catch (e) { next(e); }
+});
+
+app.put('/api/parts/categories/:id', authMiddleware, requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    const name = String(req.body?.name || '').trim();
+    const description = req.body?.description ? String(req.body.description).trim() : null;
+    if (!name) return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'name is required' } });
+    const { rows } = await pool.query(
+      `UPDATE part_categories SET name=$1, description=$2, updated_at=NOW() WHERE id=$3 RETURNING id, name, description, created_at, updated_at`,
+      [name, description, id]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'category not found' } });
+    res.json({ success: true, data: rows[0] });
+  } catch (e) { next(e); }
+});
+
+app.delete('/api/parts/categories/:id', authMiddleware, requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { rowCount } = await pool.query('DELETE FROM part_categories WHERE id=$1', [Number(req.params.id)]);
+    if (!rowCount) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'category not found' } });
+    res.json({ success: true });
+  } catch (e) { next(e); }
+});
+
+// ─── PARTS ──────────────────────────────────────────────────
+app.get('/api/parts', authMiddleware, async (req, res, next) => {
+  try {
+    const role = req.user.role;
+    const userId = req.user.id;
+    const categoryId = req.query.categoryId ? Number(req.query.categoryId) : null;
+    const params = [];
+    const conditions = [];
+    if (categoryId) {
+      params.push(categoryId);
+      conditions.push(`p.id IN (SELECT part_id FROM part_category_map WHERE category_id = $${params.length})`);
+    }
+    if (role === 'SCOUT' || role === 'SCOUT_FULL') {
+      params.push(userId);
+      conditions.push(`p.id IN (SELECT ps.part_id FROM part_stock ps JOIN user_warehouses uw ON uw.warehouseid = ps.warehouse_id WHERE uw.userid = $${params.length} AND ps.quantity > 0)`);
+    }
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+    const { rows } = await pool.query(`
+      SELECT p.id, p.sku, p.name, p.description, p.photo_url, p.created_at, p.updated_at,
+        COALESCE(json_agg(DISTINCT jsonb_build_object('id', pc.id, 'name', pc.name)) FILTER (WHERE pc.id IS NOT NULL), '[]') AS categories
+      FROM parts p
+      LEFT JOIN part_category_map pcm ON pcm.part_id = p.id
+      LEFT JOIN part_categories pc ON pc.id = pcm.category_id
+      ${where} GROUP BY p.id ORDER BY p.name ASC`, params);
+    res.json({ success: true, data: rows });
+  } catch (e) { next(e); }
+});
+
+app.post('/api/parts', authMiddleware, requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'name is required' } });
+    const description = req.body?.description ? String(req.body.description).trim() : null;
+    const photo_url = req.body?.photo_url ? String(req.body.photo_url).trim() : null;
+    const categoryIds = Array.isArray(req.body?.categoryIds) ? req.body.categoryIds.map(Number) : [];
+    const { rows } = await client.query(
+      `INSERT INTO parts (name, description, photo_url) VALUES ($1, $2, $3) RETURNING id, name, description, photo_url, created_at, updated_at`,
+      [name, description, photo_url]
+    );
+    const part = rows[0];
+    const sku = 'PART-' + String(part.id).padStart(6, '0');
+    await client.query('UPDATE parts SET sku=$1 WHERE id=$2', [sku, part.id]);
+    part.sku = sku;
+    for (const cid of categoryIds) {
+      await client.query(`INSERT INTO part_category_map (part_id, category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [part.id, cid]);
+    }
+    await client.query('COMMIT');
+    res.status(201).json({ success: true, data: { ...part, sku } });
+  } catch (e) { await client.query('ROLLBACK'); next(e); }
+  finally { client.release(); }
+});
+
+app.put('/api/parts/:id', authMiddleware, requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const id = Number(req.params.id);
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'name is required' } });
+    const description = req.body?.description !== undefined ? (req.body.description || null) : undefined;
+    const photo_url = req.body?.photo_url !== undefined ? (req.body.photo_url || null) : undefined;
+    const categoryIds = Array.isArray(req.body?.categoryIds) ? req.body.categoryIds.map(Number) : null;
+    const { rows } = await client.query(
+      `UPDATE parts SET name=$1, description=COALESCE($2, description), photo_url=COALESCE($3, photo_url), updated_at=NOW()
+       WHERE id=$4 RETURNING id, sku, name, description, photo_url, created_at, updated_at`,
+      [name, description ?? null, photo_url ?? null, id]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'part not found' } });
+    if (categoryIds !== null) {
+      await client.query('DELETE FROM part_category_map WHERE part_id=$1', [id]);
+      for (const cid of categoryIds) {
+        await client.query(`INSERT INTO part_category_map (part_id, category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [id, cid]);
+      }
+    }
+    await client.query('COMMIT');
+    res.json({ success: true, data: rows[0] });
+  } catch (e) { await client.query('ROLLBACK'); next(e); }
+  finally { client.release(); }
+});
+
+app.delete('/api/parts/:id', authMiddleware, requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const { rowCount } = await pool.query('DELETE FROM parts WHERE id=$1', [Number(req.params.id)]);
+    if (!rowCount) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'part not found' } });
+    res.json({ success: true });
+  } catch (e) { next(e); }
+});
+
+// ─── STOCK ──────────────────────────────────────────────────
+app.get('/api/parts/:id/stock', authMiddleware, async (req, res, next) => {
+  try {
+    const partId = Number(req.params.id);
+    const role = req.user.role;
+    const userId = req.user.id;
+    let sql = `SELECT ps.warehouse_id, ps.quantity, ps.min_stock, w.name AS warehouse_name
+               FROM part_stock ps JOIN warehouses w ON w.id = ps.warehouse_id WHERE ps.part_id = $1`;
+    const params = [partId];
+    if (['TECHNICIAN','SENIOR_TECH','SCOUT','SCOUT_FULL'].includes(role)) {
+      params.push(userId);
+      sql += ` AND ps.warehouse_id IN (SELECT warehouseid FROM user_warehouses WHERE userid = $2)`;
+    }
+    const { rows } = await pool.query(sql + ' ORDER BY w.name ASC', params);
+    res.json({ success: true, data: rows });
+  } catch (e) { next(e); }
+});
+
+app.put('/api/parts/:id/stock', authMiddleware, requireRole('SUPER_ADMIN'), async (req, res, next) => {
+  try {
+    const partId = Number(req.params.id);
+    const warehouseId = Number(req.body?.warehouseId);
+    const quantity = Number(req.body?.quantity ?? 0);
+    const min_stock = Number(req.body?.minStock ?? 0);
+    if (!warehouseId) return res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: 'warehouseId is required' } });
+    const { rows } = await pool.query(
+      `INSERT INTO part_stock (part_id, warehouse_id, quantity, min_stock) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (part_id, warehouse_id) DO UPDATE SET quantity=$3, min_stock=$4 RETURNING *`,
+      [partId, warehouseId, quantity, min_stock]
+    );
+    res.json({ success: true, data: rows[0] });
+  } catch (e) { next(e); }
+});
