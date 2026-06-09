@@ -13,10 +13,10 @@ router.get('/categories', async (req, res) => {
 // POST /api/part-categories
 router.post('/categories', async (req, res) => {
   try {
-    const { name, description } = req.body;
+    const { name, description, parentId } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
     const result = await pool.query(
-      'INSERT INTO part_categories (name, description) VALUES ($1, $2) RETURNING *',
+      'INSERT INTO part_categories (name, description, parent_id) VALUES ($1, $2, $3) RETURNING *',
       [name, description || null]
     );
     res.status(201).json(result.rows[0]);
