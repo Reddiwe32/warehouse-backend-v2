@@ -83,6 +83,16 @@ router.post('/', async (req, res) => {
         await pool.query('INSERT INTO part_category_map (part_id, category_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [part.id, cid]);
       }
     }
+    // Автоматически создаём part_stock для всех складов
+    try {
+      const warehouses = await pool.query('SELECT id FROM warehouses');
+      for (const wh of warehouses.rows) {
+        await pool.query(
+          'INSERT INTO part_stock (part_id, warehouse_id, quantity, min_stock) VALUES ($1, $2, 0, 0) ON CONFLICT DO NOTHING',
+          [part.id, wh.id]
+        );
+      }
+    } catch (_) {}
     res.status(201).json(part);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
