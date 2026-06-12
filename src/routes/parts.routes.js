@@ -48,6 +48,41 @@ router.get('/', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /api/parts/with-stock?warehouseId=1
+router.get('/with-stock', async (req, res) => {
+  try {
+    const warehouseId = req.query.warehouseId;
+    const params = [];
+    let whereJoin = '';
+    if (warehouseId) {
+      params.push(warehouseId);
+      whereJoin = 'AND ps.warehouse_id = $1';
+    }
+
+    const result = await pool.query(
+      `
+      SELECT
+        p.id,
+        p.sku,
+        p.name,
+        p.description,
+        p.photo_url AS "photoPath",
+        COALESCE(ps.quantity, 0) AS quantity
+      FROM parts p
+      LEFT JOIN part_stock ps
+        ON ps.part_id = p.id
+        ${whereJoin}
+      ORDER BY p.name
+      `,
+      params
+    );
+
+    res.json(result.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // GET /api/parts/:id
 router.get('/:id', async (req, res) => {
   try {
@@ -141,39 +176,5 @@ router.put('/:id', async (req, res) => {
 });
 
 
-// GET /api/parts/with-stock?warehouseId=1
-router.get('/with-stock', async (req, res) => {
-  try {
-    const warehouseId = req.query.warehouseId;
-    const params = [];
-    let whereJoin = '';
-    if (warehouseId) {
-      params.push(warehouseId);
-      whereJoin = 'AND ps.warehouse_id = $1';
-    }
-
-    const result = await pool.query(
-      `
-      SELECT
-        p.id,
-        p.sku,
-        p.name,
-        p.description,
-        p.photo_url AS "photoPath",
-        COALESCE(ps.quantity, 0) AS quantity
-      FROM parts p
-      LEFT JOIN part_stock ps
-        ON ps.part_id = p.id
-        ${whereJoin}
-      ORDER BY p.name
-      `,
-      params
-    );
-
-    res.json(result.rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
 module.exports = router;
