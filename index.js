@@ -12,18 +12,33 @@ const errorHandler = require('./src/middlewares/errorHandler');
 const multer = require('multer');
 const nodePath = require('path');
 const nodeFs = require('fs');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 const uploadsDir = nodePath.join(__dirname, 'uploads');
 if (!nodeFs.existsSync(uploadsDir)) nodeFs.mkdirSync(uploadsDir);
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const ext = nodePath.extname(file.originalname);
-    const unique = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, unique + ext);
-  }
-});
+const useCloudinary = !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+console.log('[INIT] useCloudinary=' + useCloudinary);
+
+const storage = useCloudinary
+  ? new CloudinaryStorage({
+      cloudinary,
+      params: { folder: 'warehouse', allowed_formats: ['jpg','jpeg','png','gif','webp'] },
+    })
+  : multer.diskStorage({
+      destination: (req, file, cb) => cb(null, uploadsDir),
+      filename: (req, file, cb) => {
+        const ext = nodePath.extname(file.originalname);
+        cb(null, Date.now() + '-' + Math.round(Math.random() * 1e9) + ext);
+      }
+    });
 
 const upload = multer({
   storage,
@@ -45,8 +60,10 @@ app.use('/uploads', express.static(uploadsDir));
 
 app.post('/api/upload', upload.single('photo'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'File not provided' });
-  const url = req.protocol + '://' + req.get('host') + '/uploads/' + req.file.filename;
-  res.json({ url, filename: req.file.filename });
+  console.log('[UPLOAD] useCloudinary=' + useCloudinary + ' keys=' + Object.keys(req.file).join(','));
+  const url = req.file.path || (req.protocol + '://' + req.get('host') + '/uploads/' + req.file.filename);
+  console.log('[UPLOAD] url=' + url);
+  res.json({ url, filename: req.file.filename || req.file.originalname });
 });
 
 
