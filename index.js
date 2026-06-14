@@ -546,6 +546,22 @@ const HOST = '0.0.0.0';
 
 console.log('PORT from env =', process.env.PORT);
 
+
+app.get('/api/my/locations', authMiddleware, async (req, res) => {
+  try {
+    const warehouseId = req.user.warehouse_id;
+    if (!warehouseId) return res.json([]);
+    const result = await pool.query(
+      'SELECT id, name, warehouse_id, created_at FROM locations WHERE warehouse_id = $1 ORDER BY name ASC',
+      [warehouseId]
+    );
+    res.json(result.rows);
+  } catch (e) {
+    console.error('GET /api/my/locations error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.use(errorHandler);
 
 initDb()
